@@ -2,6 +2,8 @@ module github.com/bjorngylling/go-kafka-state
 
 go 1.18
 
+replace github.com/twmb/franz-go v1.4.2 => ../franz-go
+
 require (
 	github.com/twmb/franz-go v1.4.2
 	github.com/twmb/franz-go/pkg/kmsg v1.0.0
