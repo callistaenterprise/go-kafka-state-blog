@@ -1,4 +1,4 @@
-1 {"id":1,"name":"Bob Smith","email":"bob_smith@example.com"}
-2 {"id":2,"name":"Sarah Black","email":"sarah_black@example.com"}
-3 {"id":3,"name":"Emma Turner","email":"emma_turner@example.com"}
-4 {"id":4,"name":"Helen Garcia","email":"helen_garcia@example.com"}
+bob_smith@example.com {"name":"Bob Smith","email":"bob_smith@example.com"}
+sarah_black@example.com {"name":"Sarah Black","email":"sarah_black@example.com"}
+emma_turner@example.com {"name":"Emma Turner","email":"emma_turner@example.com"}
+helen_garcia@example.com {"name":"Helen Garcia","email":"helen_garcia@example.com"}

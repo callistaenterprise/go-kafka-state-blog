@@ -76,9 +76,9 @@ func serveHttp(addr string, users *UserStore) func(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		fmt.Printf("http: %s: /user?id=%s\n", r.Method, id)
-		u, ok := users.Get(id)
+		email := r.URL.Query().Get("email")
+		fmt.Printf("http: %s: /user?email=%s\n", r.Method, email)
+		u, ok := users.Get(email)
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -111,15 +111,15 @@ func NewUserStore() *UserStore {
 	return &UserStore{u: map[string]string{}}
 }
 
-func (u *UserStore) Get(id string) (string, bool) {
+func (u *UserStore) Get(email string) (string, bool) {
 	u.l.RLock()
 	defer u.l.RUnlock()
-	user, ok := u.u[id]
+	user, ok := u.u[email]
 	return user, ok
 }
 
-func (u *UserStore) Set(id string, user string) {
+func (u *UserStore) Set(email string, user string) {
 	u.l.Lock()
 	defer u.l.Unlock()
-	u.u[id] = user
+	u.u[email] = user
 }
