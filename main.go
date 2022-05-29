@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,7 +34,7 @@ func main() {
 
 	users := NewUserStore()
 	// Start serving HTTP requests
-	httpShutdown := serveHttp(listenAddr, users)
+	httpShutdown := serveHttp(listenAddr, users, cl)
 
 	// Run our consume loop in a separate Go routine
 	ctx := context.Background()
@@ -66,26 +68,61 @@ func consume(ctx context.Context, cl *kgo.Client, users *UserStore) {
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
 			for _, record := range p.Records {
 				fmt.Printf("%s (p=%d): %s\n", string(record.Key), record.Partition, string(record.Value))
-				users.Set(string(record.Key), string(record.Value))
+				u := User{}
+				err := json.Unmarshal(record.Value, &u)
+				if err != nil {
+					panic(err)
+				}
+				users.Set(string(record.Key), u)
 			}
 		})
 	}
 }
 
-func serveHttp(addr string, users *UserStore) func(ctx context.Context) error {
+func serveHttp(addr string, users *UserStore, kClient *kgo.Client) func(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
 		email := r.URL.Query().Get("email")
-		fmt.Printf("http: %s: /user?email=%s\n", r.Method, email)
-		u, ok := users.Get(email)
-		if !ok {
-			http.NotFound(w, r)
+		fmt.Printf("http: %s /user?email=%s\n", r.Method, email)
+		switch r.Method {
+		case http.MethodGet:
+			u, ok := users.Get(email)
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			b, err := json.Marshal(u)
+			if err != nil {
+				panic(err)
+			}
+			_, err = w.Write(b)
+			if err != nil {
+				panic(err)
+			}
 			return
-		}
-		_, err := w.Write([]byte(u))
-		if err != nil {
-			panic(err)
+		case http.MethodPut:
+			u := User{}
+			b, err := io.ReadAll(r.Body)
+			if err != nil {
+				panic(err)
+			}
+			if json.Unmarshal(b, &u) != nil {
+				panic(err)
+			}
+			if email == "" {
+				email = u.Email
+			}
+			v, err := json.Marshal(u)
+			if err != nil {
+				panic(err)
+			}
+			res := kClient.ProduceSync(r.Context(), &kgo.Record{Key: []byte(email), Value: v, Topic: "user"})
+			if err := res.FirstErr(); err != nil {
+				http.Error(w, "failed to update user", http.StatusInternalServerError)
+			}
+			w.WriteHeader(http.StatusOK)
+			return
 		}
 	})
 
@@ -102,23 +139,28 @@ func serveHttp(addr string, users *UserStore) func(ctx context.Context) error {
 	return s.Shutdown
 }
 
+type User struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
 type UserStore struct {
 	l sync.RWMutex
-	u map[string]string
+	u map[string]User
 }
 
 func NewUserStore() *UserStore {
-	return &UserStore{u: map[string]string{}}
+	return &UserStore{u: map[string]User{}}
 }
 
-func (u *UserStore) Get(email string) (string, bool) {
+func (u *UserStore) Get(email string) (User, bool) {
 	u.l.RLock()
 	defer u.l.RUnlock()
 	user, ok := u.u[email]
 	return user, ok
 }
 
-func (u *UserStore) Set(email string, user string) {
+func (u *UserStore) Set(email string, user User) {
 	u.l.Lock()
 	defer u.l.Unlock()
 	u.u[email] = user
