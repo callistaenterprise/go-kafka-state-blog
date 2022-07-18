@@ -68,6 +68,14 @@ func consume(ctx context.Context, cl *kgo.Client, users *UserStore) {
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
 			for _, record := range p.Records {
 				fmt.Printf("%s (p=%d): %s\n", string(record.Key), record.Partition, string(record.Value))
+
+				// Handle tombstones and continue with next record
+				if len(record.Value) == 0 {
+					users.Delete(string(record.Key))
+					continue
+				}
+
+				// Update state
 				u := User{}
 				err := json.Unmarshal(record.Value, &u)
 				if err != nil {
@@ -123,6 +131,13 @@ func serveHttp(addr string, users *UserStore, kClient *kgo.Client) func(ctx cont
 			}
 			w.WriteHeader(http.StatusOK)
 			return
+		case http.MethodDelete:
+			res := kClient.ProduceSync(r.Context(), &kgo.Record{Key: []byte(email), Value: []byte{}, Topic: "user"})
+			if err := res.FirstErr(); err != nil {
+				http.Error(w, "failed to update user", http.StatusInternalServerError)
+			}
+			w.WriteHeader(http.StatusOK)
+			return
 		}
 	})
 
@@ -164,4 +179,10 @@ func (u *UserStore) Set(email string, user User) {
 	u.l.Lock()
 	defer u.l.Unlock()
 	u.u[email] = user
+}
+
+func (u *UserStore) Delete(email string) {
+	u.l.Lock()
+	defer u.l.Unlock()
+	delete(u.u, email)
 }
