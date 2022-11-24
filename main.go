@@ -6,13 +6,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/twmb/franz-go/pkg/kgo"
 	"io"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
+
+	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 func main() {
@@ -26,6 +27,15 @@ func main() {
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(seeds...),
 		kgo.ConsumeTopics("user"),
+		kgo.ConsumerGroup(group),
+		kgo.AdjustFetchOffsetsFn(func(ctx context.Context, m map[string]map[int32]kgo.Offset) (map[string]map[int32]kgo.Offset, error) {
+			for k, v := range m {
+				for i := range v {
+					m[k][i] = kgo.NewOffset().At(-2).WithEpoch(-1)
+				}
+			}
+			return m, nil
+		}),
 	)
 	if err != nil {
 		panic(err)
