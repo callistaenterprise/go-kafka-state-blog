@@ -10,16 +10,19 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
 func main() {
-	var broker, listenAddr string
-	flag.StringVar(&broker, "b", "localhost:50278", "Kafka broker")
+	var broker, listenAddr, group string
+	flag.StringVar(&broker, "b", "localhost:65363", "Kafka broker")
 	flag.StringVar(&listenAddr, "l", ":8080", "HTTP listen address")
+	flag.StringVar(&group, "g", "go-kafka-state", "The Kafka ConsumerGroup")
 	flag.Parse()
 
 	// Connect to the Redpanda broker and consume the user topic
@@ -28,6 +31,7 @@ func main() {
 		kgo.SeedBrokers(seeds...),
 		kgo.ConsumeTopics("user"),
 		kgo.ConsumerGroup(group),
+		kgo.Balancers(NewRangeBalancer(listenAddr)),
 		kgo.AdjustFetchOffsetsFn(func(ctx context.Context, m map[string]map[int32]kgo.Offset) (map[string]map[int32]kgo.Offset, error) {
 			for k, v := range m {
 				for i := range v {
@@ -44,7 +48,7 @@ func main() {
 
 	users := NewUserStore()
 	// Start serving HTTP requests
-	httpShutdown := serveHttp(listenAddr, users, cl)
+	httpShutdown := serveHttp(listenAddr, users, cl, group)
 
 	// Run our consume loop in a separate Go routine
 	ctx := context.Background()
@@ -97,9 +101,32 @@ func consume(ctx context.Context, cl *kgo.Client, users *UserStore) {
 	}
 }
 
-func serveHttp(addr string, users *UserStore, kClient *kgo.Client) func(ctx context.Context) error {
+func fetchGroup(ctx context.Context, group string, kClient *kgo.Client) map[string]string {
+	members := map[string]string{}
+	resp := kClient.RequestSharded(ctx, &kmsg.DescribeGroupsRequest{Groups: []string{group}})
+	for _, m := range resp[0].Resp.(*kmsg.DescribeGroupsResponse).Groups[0].Members {
+		metadata := kmsg.ConsumerMemberMetadata{}
+		metadata.ReadFrom(m.ProtocolMetadata)
+		assign := kmsg.ConsumerMemberAssignment{}
+		assign.ReadFrom(m.MemberAssignment)
+		for _, owned := range assign.Topics {
+			for _, p := range owned.Partitions {
+				members[owned.Topic+"-"+strconv.Itoa(int(p))] = string(metadata.UserData)
+			}
+		}
+	}
+	return members
+}
+
+func serveHttp(addr string, users *UserStore, kClient *kgo.Client, group string) func(ctx context.Context) error {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/groupinfo", func(w http.ResponseWriter, r *http.Request) {
+		m := fetchGroup(r.Context(), group, kClient)
+		b, _ := json.Marshal(m)
+		w.Write(b)
+		return
+	})
 	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
 		email := r.URL.Query().Get("email")
 		fmt.Printf("http: %s /user?email=%s\n", r.Method, email)
