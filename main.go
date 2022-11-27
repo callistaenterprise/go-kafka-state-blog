@@ -21,7 +21,7 @@ import (
 func main() {
 	var broker, listenAddr, group string
 	flag.StringVar(&broker, "b", "localhost:65363", "Kafka broker")
-	flag.StringVar(&listenAddr, "l", ":8080", "HTTP listen address")
+	flag.StringVar(&listenAddr, "l", "localhost:8080", "HTTP listen port")
 	flag.StringVar(&group, "g", "go-kafka-state", "The Kafka ConsumerGroup")
 	flag.Parse()
 
@@ -39,6 +39,9 @@ func main() {
 				}
 			}
 			return m, nil
+		}),
+		kgo.OnPartitionsAssigned(func(ctx context.Context, c *kgo.Client, m map[string][]int32) {
+			fmt.Println("OnPartitionsAssigned")
 		}),
 	)
 	if err != nil {
@@ -119,6 +122,7 @@ func fetchGroup(ctx context.Context, group string, kClient *kgo.Client) map[stri
 }
 
 func serveHttp(addr string, users *UserStore, kClient *kgo.Client, group string) func(ctx context.Context) error {
+	partitioner := kgo.StickyKeyPartitioner(nil)
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/groupinfo", func(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +136,25 @@ func serveHttp(addr string, users *UserStore, kClient *kgo.Client, group string)
 		fmt.Printf("http: %s /user?email=%s\n", r.Method, email)
 		switch r.Method {
 		case http.MethodGet:
+			table := fetchGroup(r.Context(), group, kClient)
+			p := partitioner.ForTopic("user").Partition(&kgo.Record{Key: []byte(email)}, len(table))
+			if a, ok := table["user-"+strconv.Itoa(p)]; ok {
+				// if this instance is not assigned the partition we forward the request
+				if a != addr {
+					resp, err := http.Get("http://" + a + r.URL.String())
+					if err != nil {
+						fmt.Printf("failed to chain call to instance %s: %s", a, err)
+						http.Error(w, "Internal server error", http.StatusInternalServerError)
+						return
+					}
+					fmt.Printf("chain call: url=%s\n", resp.Request.URL)
+					io.Copy(w, resp.Body)
+					return
+				}
+			} else {
+				http.Error(w, "partition not found in routing table", http.StatusInternalServerError)
+				return
+			}
 			u, ok := users.Get(email)
 			if !ok {
 				http.NotFound(w, r)
