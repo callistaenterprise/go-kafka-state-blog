@@ -1,4 +1,4 @@
-module github.com/bjorngylling/go-kafka-state
+module github.com/callistaenterprise/go-kafka-state-blog
 
 go 1.19
 
