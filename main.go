@@ -88,6 +88,7 @@ func consume(ctx context.Context, cl *kgo.Client, users *UserStore) {
 
 				// Handle tombstones and continue with next record
 				if len(record.Value) == 0 {
+					fmt.Printf("got tombstone for: %s\n", string(record.Key))
 					users.Delete(string(record.Key))
 					continue
 				}
