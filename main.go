@@ -176,7 +176,7 @@ func serveHttp(addr string, users *UserStore, kClient *kgo.Client, group string)
 			if err != nil {
 				panic(err)
 			}
-			if json.Unmarshal(b, &u) != nil {
+			if err := json.Unmarshal(b, &u); err != nil {
 				panic(err)
 			}
 			if email == "" {
